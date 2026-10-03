@@ -37,11 +37,17 @@ const UpdateEventForm: React.FC<{ eventId: string }> = ({ eventId }) => {
     const event = events?.find((e) => e.id === eventId);
     if (event) {
       setFormData({
-        ...event,
+        title: event.title,
+        shortDescription: event.shortDescription,
+        longDescription: event.longDescription,
+        date: typeof event.date === "string" ? event.date : event.date.toISOString(),
+        venue: event.venue,
         categories: Array.isArray(event.categories) ? event.categories.join(",") : "", // Handle categories array
         capacity: event.capacity ?? 0, // Default to 0 if capacity is missing
         price: event.price ?? 0, // Default to 0 if price is missing
+        availableTickets: event.availableTickets ?? 0,
         adminId: event.admin || "",   // Map admin to adminId
+        pictureId: event.pictureId[0] ?? "", // Form edits a single picture
         eventType: event.eventType === "PAID" || event.eventType === "FREE" ? event.eventType : "FREE", // Ensure eventType is valid
       });
     }
@@ -53,6 +59,7 @@ const UpdateEventForm: React.FC<{ eventId: string }> = ({ eventId }) => {
       ...formData,
       categories: formData.categories.split(","), // Split categories back to array
       admin: formData.adminId, // Map adminId to admin
+      pictureId: formData.pictureId ? [formData.pictureId] : [],
     });
   };
 

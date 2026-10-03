@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
-import { FaEdit, FaSave, FaCamera } from "react-icons/fa";
+import { FaCamera } from "react-icons/fa";
 import { useUser } from "@clerk/clerk-react";
 
 const ProfilePage: React.FC = () => {
@@ -27,11 +27,6 @@ const ProfilePage: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSave = () => {
-    // updateUserProfile(formData); // Update profile logic here
-    setEditMode(false);
   };
 
   return (

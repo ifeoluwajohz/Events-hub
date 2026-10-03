@@ -3,10 +3,26 @@ import { useParams, useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
 
 
+// Shape of the /event/:id/bookedOne response fields this page reads
+interface BookingDetails {
+  id: string;
+  quantity: number;
+  totalAmount: number;
+  event: {
+    title: string;
+    date: string;
+    venue: string;
+    price?: number | null;
+  };
+  user: {
+    name?: string | null;
+  };
+}
+
 const TicketPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [bookingData, setBookingData] = useState<any>(null);
+  const [bookingData, setBookingData] = useState<BookingDetails | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
@@ -69,14 +85,14 @@ const TicketPage: React.FC = () => {
     }
   };
 
-  {loading && (
+  if (loading) return (
     <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
       <div className="flex flex-col items-center">
         <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>
         <p className="text-white text-lg mt-3">Processing...</p>
       </div>
     </div>
-  )}
+  );
   if (error) return <div className="text-red-500 text-center mt-10">{error}</div>;
   if (!bookingData) return <div className="text-center mt-10">No booking data found</div>;
 
