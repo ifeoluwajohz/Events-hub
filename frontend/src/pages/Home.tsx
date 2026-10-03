@@ -1,6 +1,6 @@
 import Carousel from "../components/Carousel";
 import HeroSection from "../components/HeroSection";
-import Faq from "../components/Faq";
+import Faq from "../components/FAQ";
 import CreateEvent from "../components/CreateEvent";
 import FindEvent from "../components/FindEvent";
 

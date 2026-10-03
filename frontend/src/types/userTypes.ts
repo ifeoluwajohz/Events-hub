@@ -23,8 +23,8 @@ interface Event{
   longDescription: string;
   date: Date;
   venue: string;
-  capacity: Number;
-  avalaibleTickets: Number
+  capacity: number;
+  avalaibleTickets: number
   eventType: ["PAID", "FREE"];
-  price: Number;
+  price: number;
 }

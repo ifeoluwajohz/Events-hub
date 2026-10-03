@@ -2,7 +2,7 @@
 import { Route, Routes } from "react-router-dom";
 
 import Home from "./pages/Home";
-import Faq from "./components/Faq";
+import Faq from "./components/FAQ";
 import Navbar from "./components/Navbar";
 
 import ProfilePage from "./utils/ProfilePage";

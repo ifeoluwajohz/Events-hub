@@ -51,6 +51,7 @@ const CreateEventForm: React.FC = () => {
     await createEvent({
       ...formData,
       price: formData.eventType === "PAID" ? formData.price : 0,
+      pictureId: formData.pictureId ? [formData.pictureId] : [],
       categories: formData.categories.split(","),
     });
   };

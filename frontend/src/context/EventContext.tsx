@@ -61,34 +61,13 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // Fetch Current Location
+  // Reverse geocoding previously called OpenCage from the browser with a
+  // hard-coded API key. That key was removed (see docs/SECURITY.md); geocoding
+  // will move behind the backend in the search phase. Until then, ask the
+  // user to type their city instead.
   const fetchCurrentLocation = async () => {
-    if (!navigator.geolocation) {
-      setError("Geolocation is not supported by your browser.");
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        try {
-          const response = await fetch(
-            `https://api.opencagedata.com/geocode/v1/json?q=${latitude}+${longitude}&key=ca38854e4bde4792bca2d07f11fdfbb2`
-          );
-          const data = await response.json();
-          if (data.results && data.results.length > 0) {
-            const locationName = data.results[0].formatted;
-            setLocation(locationName);
-            fetchEventsByLocation(locationName);
-          } else {
-            setError("Could not determine your location name.");
-          }
-        } catch (err) {
-          setError("Error fetching location details.");
-        }
-      },
-      () => {
-        setError("Unable to retrieve location. Please try again.");
-      }
+    setError(
+      "Searching by your current location isn't available yet. Please type your city instead."
     );
   };
   
@@ -108,7 +87,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const newEvent = await response.json();
       setEvents((prev) => (prev ? [...prev, newEvent] : [newEvent]));
       console.log(newEvent)
-    } catch (err: any) {
+    } catch {
       setError("Error creating event");
     } finally {
       setLoading(false);
@@ -132,7 +111,7 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       setEvents((prev) =>
         prev ? prev.map((e) => (e.id === id ? updatedEvent : e)) : [updatedEvent]
       );
-    } catch (err: any) {
+    } catch {
       setError("Error updating event");
     } finally {
       setLoading(false);

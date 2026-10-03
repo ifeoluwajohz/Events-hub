@@ -1,13 +1,8 @@
 const { PrismaClient } = require("@prisma/client");
-const admin = require("firebase-admin");
+const admin = require("../configs/firebaseAdmin");
 const jwt = require("jsonwebtoken"); // For generating the token
 
 const prisma = new PrismaClient();
-
-const serviceAccount = require("../configs/serviceAccountKey.json");
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
 
 const maxage = 3 * 24 * 60 * 60;
 const generateToken = (userId) => {

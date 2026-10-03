@@ -1,2 +1,12 @@
 node_modules
+
+# Environment files: never commit real values. Templates (*.env.example) are allowed.
 .env
+.env.*
+!.env.example
+
+# Credential files
+serviceAccountKey.json
+*service-account*.json
+*.pem
+*.p12

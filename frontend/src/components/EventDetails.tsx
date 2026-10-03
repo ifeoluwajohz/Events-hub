@@ -80,15 +80,15 @@ const EventDetails: React.FC = () => {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
       }
-    } catch (error) {
+    } catch {
       console.log("Sharing canceled or failed.");
     } finally {
       setSharing(false);
     }
   };
 
-  {
-    loading && (
+  if (loading) {
+    return (
       <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
         <div className="flex flex-col items-center">
           <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>

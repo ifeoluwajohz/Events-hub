@@ -22,7 +22,7 @@ interface Event {
 const Events: React.FC = () => {
   const { user } = useUser();
   const [bookings, setBookings] = useState<Booking[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
 
@@ -85,14 +85,9 @@ const Events: React.FC = () => {
     fetchBookings();
   }, [user]);
 
-  {loading && (
-    <div className="absolute inset-0 flex items-center justify-center bg-black/60 rounded-xl">
-      <div className="flex flex-col items-center">
-        <div className="w-8 h-8 border-4 border-green-500 border-t-transparent rounded-full animate-spin"></div>
-        <p className="text-white text-lg mt-3">Processing...</p>
-      </div>
-    </div>
-  )}
+  // TODO(phase 2): render a loading state. `loading` currently never resets
+  // for signed-out users or when "Delete All" is cancelled, so showing it
+  // here would leave a permanent spinner.
   if (error) return <div className="text-center text-red-500 py-10">{error}</div>;
 
   return (
