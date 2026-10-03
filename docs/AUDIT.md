@@ -152,6 +152,8 @@ Pick **one name** and use it everywhere.
 
 ## 6. Implementation plan
 
+> **Superseded for phases 2 and later by [`ROADMAP.md`](./ROADMAP.md)** (adopted 2026-10-03). Phase 2 now includes the organizer, verification, event status and admin data model. Phase 5 is a full product redesign covering attendee, organizer and admin surfaces. Phases 6–7 are polish and production QA. The plan below is kept for history.
+
 **Phase 0: Secure (½ day).** Rotate and untrack secrets (section 0), lock down the open DELETE and `switchRole` routes.
 
 **Phase 1: Make it build and run (1–2 days).**
