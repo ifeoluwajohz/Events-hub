@@ -44,6 +44,36 @@ Browser (Clerk) ── Bearer <Clerk session JWT> ──▶ Express
 | Every event moderated; no `SOLD_OUT` status | `policy.EVENT_TRANSITIONS` (only admin APPROVE → PUBLISHED); sold-out derived | `policy.test.js`, `events.test.js` |
 | Expand → backfill → validate; no contract yet | 3 migrations; legacy tables and columns retained | `migration.test.js` |
 
+## 3b. Backfill: fail-closed refusals and reporting
+
+The backfill **refuses (rolls back)** rather than guessing on any of these:
+- legacy `Ticket` rows
+- events without an owner
+- PAID events without a price
+- **FREE events with a price**
+- sub-minor-unit prices
+- missing or negative inventory
+- bookings with a bad quantity or total
+- case-insensitive duplicate emails
+- **event owners with no name to use as the organizer name**
+- category slug collisions
+- duplicate event/category links
+
+Everything it does is counted. It evaluates **16 invariants** together, and on failure it aborts and lists every failing invariant. The summary record (`AuditLog` id `aud_phase2b_backfill`) is written only if all 16 pass. It contains:
+- exact transform counts
+- approved defaults applied
+- rows deliberately left untouched
+- anomalies kept as history (for example, legacy bookings whose client-supplied total differs from quantity × price)
+
+`npm run migrate:report` prints that record and independently re-verifies 8 durable invariants in a read-only transaction. It exits non-zero on any failure, so rollout reports give numbers, not just "migration successful".
+
+Fixture run (`test/fixtures/legacy-data.sql`; the only run so far, since **no real database has been migrated**):
+- **Transformed:** 4 events (3 → PENDING_REVIEW, 1 → COMPLETED), 2 organizers, 4 ticket types (2 free, 2 paid), 6 bookings and 6 booking items, 5 file assets, 2 covers + 3 gallery links, 2 category slugs, 1 email lower-cased, 4 MIGRATED moderation records.
+- **Defaults:** NGN and Africa/Lagos on 4 events each.
+- **Left untouched:** 3 legacy Admin rows without events; 3 legacy ADMIN roles (kept inert); 1 empty image URL.
+- **Anomalies:** 1.
+- **Invariants:** 16/16 at migration time, 8/8 durable re-checks.
+
 ## 4. Deviations from the Phase 2A proposal (and why)
 
 | Proposal | Built | Reason |

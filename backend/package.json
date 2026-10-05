@@ -10,6 +10,7 @@
     "prisma:validate": "prisma validate",
     "prisma:drift": "prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url \"$SHADOW_DATABASE_URL\" --exit-code",
     "migrate:deploy": "prisma migrate deploy",
+    "migrate:report": "node scripts/migration-report.js",
     "admin:grant": "node scripts/admin-grant.js",
     "jobs:complete-events": "node scripts/complete-events.js",
     "postinstall": "prisma generate"

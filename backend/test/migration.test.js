@@ -4,6 +4,8 @@ const { test, describe, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const BACKEND = path.resolve(__dirname, "..");
 const {
   allMigrationNames,
   createDatabase,
@@ -119,7 +121,8 @@ describe("phase 2B migration on realistic legacy data", () => {
         { eventId: "evt_bola", name: "General admission", priceMinor: 0, quantityTotal: 20, quantitySold: 0 },
         // 47 available + 3 held (bk_1 x2 PENDING, bk_5 x1 CONFIRMED; cancelled bk_2 excluded)
         { eventId: "evt_future_free", name: "General admission", priceMinor: 0, quantityTotal: 50, quantitySold: 3 },
-        { eventId: "evt_future_paid", name: "General admission", priceMinor: 500050, quantityTotal: 11, quantitySold: 1 },
+        // 10 available + bk_3 + bk_6
+        { eventId: "evt_future_paid", name: "General admission", priceMinor: 500050, quantityTotal: 12, quantitySold: 2 },
         { eventId: "evt_past_paid", name: "General admission", priceMinor: 250000, quantityTotal: 3, quantitySold: 3 },
       ]);
     });
@@ -136,6 +139,8 @@ describe("phase 2B migration on realistic legacy data", () => {
         { id: "bk_3", userId: "usr_tunde", currency: "NGN", totalMinor: 500050, quantity: 1, unitPriceMinor: 500050 },
         { id: "bk_4", userId: "usr_chidi", currency: "NGN", totalMinor: 750000, quantity: 3, unitPriceMinor: 250000 },
         { id: "bk_5", userId: "usr_bola", currency: "NGN", totalMinor: 0, quantity: 1, unitPriceMinor: 0 },
+        // recorded total kept as history (anomaly), not "corrected"
+        { id: "bk_6", userId: "usr_ghost", currency: "NGN", totalMinor: 0, quantity: 1, unitPriceMinor: 500050 },
       ]);
     });
   });
@@ -182,6 +187,70 @@ describe("phase 2B migration on realistic legacy data", () => {
     });
   });
 
+  test("the backfill records exactly what it transformed and that every invariant passed", async () => {
+    await withClient(db.url, async (c) => {
+      const [row] = await rows(c, `SELECT "metadata" FROM "AuditLog" WHERE "id" = 'aud_phase2b_backfill'`);
+      const m = row.metadata;
+      assert.deepEqual(m.transformed, {
+        "audit.organizer_entries": 2,
+        "booking_items.created": 6,
+        "bookings.converted_to_minor_units": 6,
+        "categories.slugged": 2,
+        "event_media.covers_linked": 2,
+        "event_media.gallery_linked": 3,
+        "events.migrated": 4,
+        "events.to_completed": 1,
+        "events.to_pending_review": 3,
+        "file_assets.created_from_legacy_urls": 5,
+        "moderation.migrated_records_created": 4,
+        "organizers.created_from_legacy_admin": 2,
+        "ticket_types.created": 4,
+        "ticket_types.free": 2,
+        "ticket_types.paid": 2,
+        "users.emails_lowercased": 1,
+        "users.platform_role_reset": 0,
+      });
+      assert.deepEqual(m.defaultsApplied, { "defaults.events_currency_ngn": 4, "defaults.events_timezone_africa_lagos": 4 });
+      assert.deepEqual(m.leftUntouched, {
+        "admins.legacy_rows_without_events_untouched": 3,
+        "media.empty_legacy_urls_skipped": 1,
+        "users.legacy_role_admin_kept_inert": 3,
+      });
+      assert.deepEqual(m.anomaliesKeptAsHistory, { bookings_total_differs_from_quantity_x_price: 1 });
+      assert.equal(Object.keys(m.invariants).length, 16);
+      assert.ok(Object.values(m.invariants).every((v) => v === "passed"), JSON.stringify(m.invariants));
+      assert.deepEqual(m.totals, { users: 5, organizers: 2, events: 4, bookings: 6, ticketTypes: 4, fileAssets: 5, eventMedia: 5 });
+    });
+  });
+
+  test("migrate:report prints the record and independently re-verifies durable invariants", () => {
+    const out = execFileSync("node", ["scripts/migration-report.js", "--json"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: db.url }, encoding: "utf8" });
+    const report = JSON.parse(out);
+    assert.equal(report.ok, true);
+    assert.equal(report.recorded.transformed["events.migrated"], 4);
+    assert.ok(report.rechecks.length >= 8 && report.rechecks.every((c) => c.passed), JSON.stringify(report.rechecks));
+  });
+
+  test("history is append-only at the database level (all five tables, UPDATE and DELETE)", async () => {
+    await withClient(db.url, async (c) => {
+      // give every history table at least one row
+      await c.query(`INSERT INTO "OrganizerStatusChange" ("id","organizerId","actorId","fromStatus","toStatus","reason")
+                     SELECT 'osc_t', "id", "ownerUserId", 'ACTIVE', 'SUSPENDED', 'test' FROM "Organizer" LIMIT 1`);
+      await c.query(`INSERT INTO "VerificationSubmission" ("id","organizerId","submittedById","country","organizerType","requirementSetVersion","declaredData","updatedAt")
+                     SELECT 'vs_t', "id", "ownerUserId", 'NG', 'INDIVIDUAL', 'DEFAULT-INDIVIDUAL@2026-10', '{}'::jsonb, now() FROM "Organizer" LIMIT 1`);
+      await c.query(`INSERT INTO "VerificationEvidence" ("id","submissionId","requirementKey","kind","value") VALUES ('ve_t','vs_t','web_presence','WEB_PRESENCE','https://x.example')`);
+      await c.query(`INSERT INTO "VerificationDecision" ("id","submissionId","reviewerId","action") SELECT 'vd_t','vs_t',"ownerUserId",'START_REVIEW' FROM "Organizer" LIMIT 1`);
+      for (const table of ["AuditLog", "EventModerationAction", "VerificationDecision", "OrganizerStatusChange", "VerificationEvidence"]) {
+        await assert.rejects(c.query(`UPDATE "${table}" SET "createdAt" = now()`), /append-only/, `UPDATE ${table}`);
+        await assert.rejects(c.query(`DELETE FROM "${table}"`), /append-only/, `DELETE ${table}`);
+      }
+      await assert.rejects(c.query(`UPDATE "VerificationSubmission" SET "declaredData" = '{"x":1}'::jsonb`), /immutable/);
+      await assert.rejects(c.query(`DELETE FROM "VerificationSubmission"`), /cannot be deleted/);
+      // status (and only status) may change
+      await c.query(`UPDATE "VerificationSubmission" SET "status" = 'UNDER_REVIEW' WHERE "id" = 'vs_t'`);
+    });
+  });
+
   test("schema has no drift after migrating", () => {
     // exits non-zero (throws) if the migrated database differs from schema.prisma
     prismaCli(db.url, ["migrate", "diff", "--from-url", db.url, "--to-schema-datamodel", "prisma/schema.prisma", "--exit-code"]);
@@ -215,6 +284,56 @@ describe("phase 2B migration refuses unsafe data and rolls back", () => {
         assert.equal(await count(c, "Organizer"), 0);
         assert.equal(await count(c, "TicketType"), 0);
       });
+    } finally {
+      await dropDatabase(db.name);
+    }
+  });
+
+  test("a FREE event that carries a price is refused, not silently made free", async () => {
+    const db = await legacyDbWith(`UPDATE "Event" SET "price" = 1500 WHERE "id" = 'evt_bola'`);
+    try {
+      deployFails(db, /FREE events carry a positive price/);
+    } finally {
+      await dropDatabase(db.name);
+    }
+  });
+
+  test("an event owner without any name is refused, not given an invented organizer name", async () => {
+    const db = await legacyDbWith(`UPDATE "User" SET "prefferedName" = NULL, "name" = '  ' WHERE "id" = 'usr_bola'`);
+    try {
+      deployFails(db, /no name to use as organizer name/);
+    } finally {
+      await dropDatabase(db.name);
+    }
+  });
+
+  test("migrate:report fails when the backfill never ran", async () => {
+    const db = await legacyDbWith(null);
+    try {
+      assert.throws(
+        () => execFileSync("node", ["scripts/migration-report.js"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: db.url }, encoding: "utf8", stdio: "pipe" }),
+        () => true,
+      );
+    } finally {
+      await dropDatabase(db.name);
+    }
+  });
+
+  test("migrate:report detects later tampering with migrated data", async () => {
+    const db = await legacyDbWith(null);
+    try {
+      migrateDeploy(db.url);
+      await withClient(db.url, (c) => c.query(`UPDATE "TicketType" SET "priceMinor" = 1 WHERE "eventId" = 'evt_future_paid'`));
+      let out = "";
+      try {
+        execFileSync("node", ["scripts/migration-report.js", "--json"], { cwd: BACKEND, env: { ...process.env, DATABASE_URL: db.url }, encoding: "utf8", stdio: "pipe" });
+        assert.fail("report should exit non-zero");
+      } catch (err) {
+        out = /** @type {any} */ (err).stdout;
+      }
+      const report = JSON.parse(out);
+      assert.equal(report.ok, false);
+      assert.equal(report.rechecks.find((c) => c.name === "migrated_ticket_prices_match_legacy").passed, false);
     } finally {
       await dropDatabase(db.name);
     }

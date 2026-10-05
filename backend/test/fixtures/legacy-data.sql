@@ -32,7 +32,9 @@ INSERT INTO "Booking" ("id", "userId", "eventId", "bookingDate", "quantity", "to
   ('bk_2', 'usr_chidi', 'evt_future_free', now() - interval '4 days', 1, 0,      'CANCELLED', false, 'Cannot make it', NULL),
   ('bk_3', 'usr_tunde', 'evt_future_paid', now() - interval '3 days', 1, 5000.5, 'PENDING',   false, NULL,           NULL),
   ('bk_4', 'usr_chidi', 'evt_past_paid',   now() - interval '70 days', 3, 7500,  'CONFIRMED', true,  NULL,           NULL),
-  ('bk_5', 'usr_bola',  'evt_future_free', now() - interval '1 day',  1, 0,      'CONFIRMED', false, NULL,           NULL);
+  ('bk_5', 'usr_bola',  'evt_future_free', now() - interval '1 day',  1, 0,      'CONFIRMED', false, NULL,           NULL),
+  -- legacy API trusted client totals: a paid seat recorded with total 0 (kept as history, reported as anomaly)
+  ('bk_6', 'usr_ghost', 'evt_future_paid', now() - interval '2 days', 1, 0,      'PENDING',   false, NULL,           NULL);
 
 INSERT INTO "Category" ("id", "name") VALUES ('cat_music', 'Music'), ('cat_tech', 'Tech & Startups');
 INSERT INTO "EventCategory" ("id", "eventId", "categoryId") VALUES
