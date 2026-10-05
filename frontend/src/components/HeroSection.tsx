@@ -86,10 +86,10 @@ const HeroSection: React.FC = () => {
                     {event.title.toUpperCase()}
                   </h3>
                   <p className="text-xs text-gray-600">
-                    {new Date(event.date).toDateString()}
+                    {new Date(event.startsAt).toDateString()}
                   </p>
-                  <p className="text-gray-600">{event.eventType}</p>
-                  <p className="text-semibold text-xs">{event.venue}</p>
+                  <p className="text-gray-600">{event.isFree ? "FREE" : "PAID"}</p>
+                  <p className="text-semibold text-xs">{event.venueName ?? event.city}</p>
                 </Link>
               ))}
             </div>

@@ -186,6 +186,44 @@ const AdminQuestionsPage: React.FC = () => {
             </select>
           </div>
 
+          {/* Ticket quantity */}
+          <div className="flex flex-col">
+            <label htmlFor="capacity" className="font-semibold mb-2">
+              Number of Tickets <span className="text-red-500">*</span>
+            </label>
+            <input
+              id="capacity"
+              type="number"
+              min={1}
+              name="capacity"
+              value={formData.capacity}
+              onChange={handleChange}
+              required
+              className="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/* Ticket price (paid events; requires a verified organizer) */}
+          {formData.eventType === "PAID" && (
+            <div className="flex flex-col">
+              <label htmlFor="price" className="font-semibold mb-2">
+                Ticket Price <span className="text-red-500">*</span>
+              </label>
+              <input
+                id="price"
+                type="number"
+                min={0}
+                step="0.01"
+                name="price"
+                value={formData.price}
+                onChange={handleChange}
+                required
+                className="px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">Paid tickets are available to verified organizers only.</p>
+            </div>
+          )}
+
           {/* Categories */}
           <div className="flex flex-col">
             <label htmlFor="category" className="font-semibold mb-2">

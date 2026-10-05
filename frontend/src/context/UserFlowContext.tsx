@@ -1,10 +1,9 @@
-import React, { createContext, useContext, useState, useEffect } from "react";
+import React, { createContext, useContext, useState } from "react";
 // import { useAuth } from "./AuthContext"; // Adjust the path as needed
 import { useNavigate } from "react-router-dom"
-const API_URL = import.meta.env.VITE_REACT_APP_API_KEY;
+import { publicApi, useApi } from "../lib/api";
 
 interface UserFlowState {
-  idToken: string | null;
   role: string | null;
   preferredName: string | null;
   location: string | null;
@@ -14,7 +13,6 @@ interface UserFlowState {
 }
 
 const initialState: UserFlowState = {
-  idToken: null,
   role: null,
   preferredName: null,
   location: null,
@@ -25,7 +23,6 @@ const initialState: UserFlowState = {
 
 interface UserFlowContextProps {
   state: UserFlowState;
-  setIdToken: (idToken: string) => void;
   setRole: (role: string) => void;
   setPreferredName: (preferredName: string) => void;
   setLocation: (location: string) => void;
@@ -46,36 +43,6 @@ export const UserFlowProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [state, setState] = useState<UserFlowState>(initialState);
   const navigate = useNavigate();
 
-  // const storedToken = localStorage.getItem("jwt");
-
-
-
-  useEffect(() => {
-    // Read JWT token on component mount
-    if (typeof window !== "undefined") {
-      const storedToken = localStorage.getItem("jwt");
-      if (storedToken) {
-        setState((prev) => ({
-          ...prev,
-          idToken: storedToken,
-        }));
-      }
-    }
-  
-    // Sync data from AuthContext
-    // if (userProfile) {
-    //   setState((prev) => ({
-    //     ...prev,
-    //     role: typeof userProfile.role === 'string' ? userProfile.role : null,
-    //     preferredName: userProfile.name || null,
-    //     location: userProfile.location || null,
-    //   }));
-    // }
-    
-  }, []);
-  
-
-  const setIdToken = (idToken: string) => setState((prev) => ({ ...prev, idToken }));
   const setRole = (role: string) => setState((prev) => ({ ...prev, role }));
   const setPreferredName = (preferredName: string) =>
     setState((prev) => ({ ...prev, preferredName }));
@@ -99,36 +66,57 @@ export const UserFlowProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     setState((prev) => ({ ...prev, selectedCategories: categories }));
   const reset = () => setState(initialState);
 
-  const syncWithBackend = async (): Promise<void> => {
-    try {
-      const response = await fetch(`${API_URL}/event/create`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("jwt")?.toString()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(state.event),
-      });
+  const api = useApi();
 
-      // console.log(localStorage.getItem("jwt"))
-      const data = await response.json();
-      navigate(`/event/${data.id}`)
-      // console.log(data.id)
-    } catch (error) {
-      if (error instanceof Error) {
-        console.log(error.message); // Safely access the error message
-      } else {
-        console.log("An unknown error occurred:", error);
-      }
+  // Creates the event through the organizer API and submits it for moderation.
+  // Errors propagate to the caller (SummaryPage) so the user sees them.
+  const syncWithBackend = async (): Promise<void> => {
+    const e = state.event;
+    const me = await api<{ organizer: { id: string } | null; displayName: string | null; name: string | null }>("/me");
+    if (!me.organizer) {
+      await api("/organizer", { method: "POST", body: { displayName: me.displayName || me.name || "My events" } });
     }
-    
+
+    // Categories are platform-managed: match the typed names, ignore unknown ones.
+    const categories = await publicApi<{ id: string; name: string; slug: string }[]>("/public/categories");
+    const wanted = (e.category || "").split(",").map((c) => c.trim().toLowerCase()).filter(Boolean);
+    const categoryIds = categories
+      .filter((c) => wanted.includes(c.name.toLowerCase()) || wanted.includes(c.slug))
+      .map((c) => c.id)
+      .slice(0, 5);
+
+    const isPaid = e.eventType === "PAID";
+    const created = await api<{ id: string }>("/organizer/events", {
+      method: "POST",
+      body: {
+        title: e.title,
+        summary: e.shortDescription,
+        description: e.longDescription,
+        // The form collects a date only; it is taken as local midnight.
+        startsAt: new Date(`${e.date}T00:00:00`).toISOString(),
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        venueName: e.venue,
+        // This legacy form has no currency field yet; the API accepts any ISO 4217 code.
+        currency: "NGN",
+        categoryIds,
+        ticketTypes: [
+          {
+            name: "General admission",
+            priceMinor: isPaid ? Math.round(Number(e.price) * 100) : 0,
+            quantityTotal: Number(e.capacity),
+          },
+        ],
+      },
+    });
+    await api(`/organizer/events/${created.id}/submit`, { method: "POST" });
+    alert("Your event was submitted for review. It will be published once a moderator approves it.");
+    navigate("/");
   };
 
   return (
     <UserFlowContext.Provider
       value={{
         state,
-        setIdToken,
         setRole,
         setPreferredName,
         setLocation,

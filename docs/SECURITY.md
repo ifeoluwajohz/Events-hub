@@ -1,6 +1,6 @@
 # Security notes and credential remediation
 
-_Last updated: 2026-10-03 (Phase 0)._ This file never contains secret values.
+_Last updated: 2026-10-05 (Phase 2B)._ This file never contains secret values.
 
 ## 1. Incident summary
 
@@ -33,18 +33,18 @@ Do these **before** the next deploy. Order matters: rotate first, then update yo
 
 > ⚠️ **Before you `git pull` this branch:** pulling a commit that untracks a file **deletes your local copy**. If you still need your local `.env` or key file, copy them somewhere outside the repo first. You're replacing their values anyway.
 
-### 3.1 Firebase service-account key: revoke and replace
+### 3.1 Firebase service-account key: revoke (no replacement needed)
+Since Phase 2B the backend no longer uses Firebase at all (authentication is Clerk), so the leaked key doesn't need a successor.
 1. Google Cloud Console → project **theevent-77725** → *IAM & Admin* → *Service accounts*.
-2. Open the Firebase Admin SDK service account → *Keys*. **Delete every existing key**, including the one committed here.
-3. *Add key → Create new key → JSON*. Store it in a password manager. **Don't put it in the repo.**
-4. Hosting: set `FIREBASE_SERVICE_ACCOUNT_JSON` to the JSON or its base64 (`base64 -w0 key.json`). Local dev: save it outside the repo and set `FIREBASE_SERVICE_ACCOUNT_PATH`, or place it at `backend/configs/serviceAccountKey.json` (gitignored).
-5. Check the service account's audit logs (Cloud Logging) for activity since **2024-12-20** that you don't recognise.
+2. Open the Firebase Admin SDK service account → *Keys*. **Delete every key**, including the one committed here. Don't create a new one.
+3. Check the service account's audit logs (Cloud Logging) for activity since **2024-12-20** that you don't recognise.
+4. Remove `FIREBASE_SERVICE_ACCOUNT_*` from your hosting env and delete any local `serviceAccountKey.json`.
 
 ### 3.2 Everything that was in `.env`
 For each value that was in the committed `.env`:
 - **Database (`DATABASE_URL`)**: change the DB user's password at your provider, or create a new user and drop the old one. Update `DATABASE_URL` in hosting. If the provider supports it, restrict network access.
-- **`JWT_SECRET`**: generate a new one (`openssl rand -base64 48`). This logs out every existing session, which is intended.
-- **Clerk secret key (`sk_…`)**, if present: Clerk Dashboard → *API Keys* → roll the secret key.
+- **`JWT_SECRET`**: no longer used since Phase 2B. Remove it from hosting; no replacement needed.
+- **Clerk secret key (`sk_…`)**, if present: Clerk Dashboard → *API Keys* → **roll the secret key**. This is now critical: since Phase 2B the backend trusts Clerk for every request. Then set `CLERK_SECRET_KEY` and `CLERK_PUBLISHABLE_KEY` on the API host.
 - **Any other API keys** in that file: revoke and reissue at each provider.
 
 ### 3.3 OpenCage API key
@@ -71,17 +71,22 @@ Once rotation is done, the old values are useless, so history cleanup is optiona
 4. Don't paste secrets into issues, PRs, commit messages or logs.
 5. If a secret leaks: rotate first, clean up second.
 
-## 6. Security work deferred to Phase 2
+## 6. Phase 2 security status
 
-These are known, documented in `docs/AUDIT.md` §2, and **intentionally not fixed in Phase 0/1**:
+Fixed in Phase 2B (verified by `backend/test/*.test.js`):
 
-- **Auth migration:** the backend still verifies Firebase ID tokens and mints its own JWT; the frontend uses Clerk and never stores that JWT, so authenticated API calls send `Bearer null`. Fix: `@clerk/express` on the backend. This also retires the Firebase service account entirely.
-- `DELETE /event/delete/:id` is **unauthenticated**.
-- `PUT /user/switchRole` lets any user become ADMIN; `AdminMiddleware` never checks the role.
-- IDOR: booking read/delete endpoints trust the `:id` in the URL rather than the authenticated user.
-- `PUT /user/updateUser/:id` is unauthenticated.
-- Booking and review endpoints trust client-sent `userId` and `totalAmount`.
-- Booking is not atomic (overselling race).
-- `cors({ origin: '*', credentials: true })`, no helmet, no rate limiting, no input validation; raw error messages returned to clients.
-- `AdminController.js` (not mounted) still initialises its own Firebase app from a non-existent path. Remove or rewire it when admin routes are rebuilt.
-- `/accountconfig` profile editing and role switching were removed from the UI in Phase 1 (they depended on a deleted Firebase `AuthContext` and crashed). They'll come back on top of the Clerk-backed API.
+- **One auth system.** The backend verifies Clerk session tokens (signature, expiry, authorized party) and derives the user from them. Firebase verification and the custom JWT are removed.
+- **No client-supplied identity.** User, organizer, role and price are never taken from the request. Unknown body fields are rejected.
+- **Ownership checks.** Bookings, tickets, events and verification data are loaded through owner-scoped queries; other people's resources return 404.
+- **No self-promotion.** Platform admin is granted only by the `admin:grant` CLI or by an existing admin; every change is audited, and the last admin can't be removed.
+- **Admin routes.** A single guarded router; non-admins get 404.
+- **Booking.** Server-side pricing, an atomic conditional inventory update (no overselling under concurrency), and idempotency keys.
+- **Everything else.** The unauthenticated delete and update endpoints, `switchRole` and bulk booking deletion are gone. CORS is an exact allow-list without credentials; security headers, rate limits and zod validation are in place; errors never expose stack traces or database messages.
+- **Verification evidence.** Admin-only, every view audited (including failed ones), and never public. The append-only triggers protect the history and audit tables.
+
+Still open:
+- **Credential rotation (section 3)**: production blocker.
+- **Admin MFA**: enable it in Clerk for every admin account (configuration, not code).
+- **Clerk webhooks** for `user.deleted` / `user.updated`: profiles currently sync lazily.
+- **Evidence retention policy** (delete files N days after a final decision): needs legal input; no files can be stored until a storage provider is chosen.
+- **Rate limits are in memory**, so they apply per instance. Use a shared store if the API is scaled horizontally.

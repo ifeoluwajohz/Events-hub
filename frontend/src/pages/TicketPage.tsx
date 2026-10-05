@@ -1,52 +1,26 @@
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { QRCodeCanvas } from "qrcode.react";
-
-
-// Shape of the /event/:id/bookedOne response fields this page reads
-interface BookingDetails {
-  id: string;
-  quantity: number;
-  totalAmount: number;
-  event: {
-    title: string;
-    date: string;
-    venue: string;
-    price?: number | null;
-  };
-  user: {
-    name?: string | null;
-  };
-}
+import { useUser } from "@clerk/clerk-react";
+import { formatMoney, useApi } from "../lib/api";
+import type { Booking } from "../types/Event";
 
 const TicketPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [bookingData, setBookingData] = useState<BookingDetails | null>(null);
+  const api = useApi();
+  const { user } = useUser();
+  const [bookingData, setBookingData] = useState<Booking | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<boolean>(false);
-  const API_URL = import.meta.env.VITE_REACT_APP_API_KEY;
 
   useEffect(() => {
     const fetchBookingData = async () => {
       try {
-        const response = await fetch(`${API_URL}/event/${id}/bookedOne`, {
-          method: "GET",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("jwt")}`,
-          },
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || "Failed to fetch booking details");
-        }
-
-        const data = await response.json();
-        setBookingData(data);
+        // Owner-scoped: another user's booking id returns "not found".
+        setBookingData(await api<Booking>(`/me/bookings/${encodeURIComponent(id ?? "")}`));
       } catch (error) {
-        console.error(error);
         setError(error instanceof Error ? error.message : "An error occurred.");
       } finally {
         setLoading(false);
@@ -56,29 +30,17 @@ const TicketPage: React.FC = () => {
     if (id) {
       fetchBookingData();
     }
-  }, [id]);
+  }, [id, api]);
 
   const handleDeleteTicket = async () => {
     if (!bookingData) return;
 
     setDeleting(true);
     try {
-      const response = await fetch(`${API_URL}/event/${bookingData.id}/cancelTicket/`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("jwt")}`,
-        },
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to delete the ticket");
-      }
-
+      await api<Booking>(`/me/bookings/${bookingData.id}/cancel`, { method: "POST" });
       alert("Ticket successfully canceled.");
       navigate("/events");
     } catch (error) {
-      console.error(error);
       setError(error instanceof Error ? error.message : "An error occurred.");
     } finally {
       setDeleting(false);
@@ -96,13 +58,17 @@ const TicketPage: React.FC = () => {
   if (error) return <div className="text-red-500 text-center mt-10">{error}</div>;
   if (!bookingData) return <div className="text-center mt-10">No booking data found</div>;
 
+  const ticketCount = bookingData.items.reduce((sum, i) => sum + i.quantity, 0);
+  const validTickets = bookingData.tickets.filter((t) => t.status === "VALID");
+  const cancellable = ["PENDING", "CONFIRMED"].includes(bookingData.status);
+
   return (
     <div className="flex justify-center items-center min-h-screen bg-gray-100 p-4">
       <div className="relative w-[420px] bg-white shadow-lg rounded-lg overflow-hidden border border-gray-300">
         {/* Ticket Header */}
         <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white text-center py-4">
           <h3 className="text-2xl font-bold uppercase">{bookingData.event?.title}</h3>
-          <p className="text-sm">{new Date(bookingData.event?.date).toLocaleString()}</p>
+          <p className="text-sm">{bookingData.event ? new Date(bookingData.event.startsAt).toLocaleString() : ""}</p>
         </div>
 
         {/* Ticket Body */}
@@ -110,25 +76,29 @@ const TicketPage: React.FC = () => {
           {/* Left Section */}
           <div className="flex-1 pr-4 border-r border-dashed border-gray-400">
             <p className="text-gray-700 text-sm">
-              <strong>Venue:</strong> {bookingData.event?.venue}
+              <strong>Venue:</strong> {bookingData.event?.venueName ?? bookingData.event?.city}
             </p>
             <p className="text-gray-700 text-sm">
-              <strong>Price:</strong> {bookingData.event?.price || "Free Entry"}
+              <strong>Status:</strong> {bookingData.status}
             </p>
             <p className="text-gray-700 text-sm">
-              <strong>Tickets Reserved:</strong> {bookingData.quantity}
+              <strong>Tickets Reserved:</strong> {ticketCount}
             </p>
             <p className="text-gray-700 text-sm">
-              <strong>Total Amount:</strong> ${bookingData.totalAmount}
+              <strong>Total Amount:</strong> {formatMoney(bookingData.totalMinor, bookingData.currency)}
             </p>
             <p className="text-gray-700 text-sm">
-              <strong>Customer:</strong> {bookingData.user?.name}
+              <strong>Customer:</strong> {user?.fullName}
             </p>
           </div>
 
-          {/* Right Section (QR Code) */}
-          <div className="flex justify-center items-center">
-            <QRCodeCanvas value={`${API_URL}/event/${id}/bookedOne`} size={80} />
+          {/* Right Section (QR codes: one per ticket, encoding the ticket's random code) */}
+          <div className="flex flex-col justify-center items-center gap-2 pl-4">
+            {validTickets.length === 0 ? (
+              <p className="text-xs text-gray-500 text-center">No valid tickets</p>
+            ) : (
+              validTickets.map((t) => <QRCodeCanvas key={t.id} value={t.code} size={80} />)
+            )}
           </div>
         </div>
 
@@ -147,13 +117,15 @@ const TicketPage: React.FC = () => {
             Go Back to Events
           </button>
 
-          <button
-            onClick={handleDeleteTicket}
-            disabled={deleting}
-            className="w-full py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition disabled:opacity-50"
-          >
-            {deleting ? "Cancelling..." : "Cancel Ticket"}
-          </button>
+          {cancellable && (
+            <button
+              onClick={handleDeleteTicket}
+              disabled={deleting}
+              className="w-full py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition disabled:opacity-50"
+            >
+              {deleting ? "Cancelling..." : "Cancel Ticket"}
+            </button>
+          )}
         </div>
       </div>
     </div>

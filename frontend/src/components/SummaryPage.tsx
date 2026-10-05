@@ -2,20 +2,26 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useUserFlow } from "../context/UserFlowContext";
 import { FaArrowLeft, FaCheckCircle } from "react-icons/fa";
+import { ApiError } from "../lib/api";
 
 const SummaryPage: React.FC = () => {
   const { state, syncWithBackend } = useUserFlow();
   const navigate = useNavigate();
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleGoBack = () => navigate(-1);
 
   const handleSubmit = async () => {
     setIsLoading(true);
+    setError(null);
     try {
       await syncWithBackend();
-    } catch (error) {
-      console.error("Submission failed:", error);
+    } catch (err) {
+      const details = err instanceof ApiError && Array.isArray(err.details)
+        ? `: ${err.details.map((d: { path: string; message: string }) => `${d.path} ${d.message}`).join("; ")}`
+        : "";
+      setError(`${err instanceof Error ? err.message : "Submission failed"}${details}`);
     } finally {
       setIsLoading(false);
     }
@@ -39,9 +45,8 @@ const SummaryPage: React.FC = () => {
             <div><span className="font-medium">Date:</span> {state?.event?.date || "N/A"}</div>
             <div><span className="font-medium">Venue:</span> {state?.event?.venue || "N/A"}</div>
             <div><span className="font-medium">Type:</span> {state?.event?.eventType || "N/A"}</div>
-            <div><span className="font-medium">Price:</span> {state?.event?.price ? `$${state.event.price}` : "Free"}</div>
+            <div><span className="font-medium">Price:</span> {state?.event?.eventType === "PAID" && state?.event?.price ? state.event.price : "Free"}</div>
             <div><span className="font-medium">Capacity:</span> {state?.event?.capacity || "N/A"}</div>
-            <div><span className="font-medium">Tickets Left:</span> {state?.event?.availableTickets || "N/A"}</div>
             <div>
               <span className="font-medium">Category:</span>{" "}
               {Array.isArray(state?.event?.category) ? state.event.category.join(", ") : "N/A"}
@@ -55,6 +60,8 @@ const SummaryPage: React.FC = () => {
             <p className="text-gray-300 text-sm">{state?.event?.shortDescription || "No description available."}</p>
           </div>
         </div>
+
+        {error && <p role="alert" className="mt-4 text-sm text-red-300">{error}</p>}
 
         {/* Buttons */}
         <div className="flex justify-between mt-6">

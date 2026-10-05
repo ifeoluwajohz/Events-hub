@@ -8,7 +8,7 @@ backend/    Express 4 + Prisma 6 + PostgreSQL
 docs/       AUDIT.md (codebase audit and roadmap), SECURITY.md (secret handling)
 ```
 
-> Status: under active stabilisation. Authenticated API flows (booking, my tickets, create event) don't work end to end until the backend's Clerk migration (Phase 2 in `docs/AUDIT.md`).
+> Status: Phase 2B (backend foundation) implemented. See `docs/PHASE2B_IMPLEMENTATION.md`. Production rollout is blocked on credential rotation (`docs/SECURITY.md`) and the database runbook (`backend/prisma/README.md`).
 
 ## Requirements
 
@@ -37,31 +37,36 @@ cp backend/.env.example  backend/.env
 | frontend | `VITE_CLERK_PUBLISHABLE_KEY` | Clerk publishable key (public) |
 | frontend | `VITE_REACT_APP_API_KEY` | Backend base URL (misnamed: it's a URL, not a key) |
 | backend | `DATABASE_URL` | Postgres connection string (Prisma) |
-| backend | `JWT_SECRET` | Signs backend session tokens |
-| backend | `FIREBASE_SERVICE_ACCOUNT_JSON` / `FIREBASE_SERVICE_ACCOUNT_PATH` | Firebase Admin credential (until Phase 2) |
-| backend | `PORT` | API port (use 4000; the default 5173 clashes with Vite) |
+| backend | `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY` | Clerk keys of the same instance as the frontend (secret key is SECRET) |
+| backend | `CLERK_JWT_KEY` (optional) | Clerk PEM public key for offline token verification |
+| backend | `CORS_ORIGINS` | Exact allowed browser origins (required in production) |
+| backend | `TRUST_PROXY`, `PORT` | Proxy awareness for rate limits; API port (4000) |
+| backend (tests) | `TEST_DATABASE_ADMIN_URL`, `SHADOW_DATABASE_URL` | Throwaway Postgres for tests and the drift check; never a real environment |
 
 `VITE_*` values are bundled into the browser, so never put a secret in one.
 
 ## Development
 
 ```bash
-# backend (http://localhost:4000)
-cd backend && npx prisma migrate dev && npm run dev
+# backend (http://localhost:4000); never run migrate dev/reset against a shared database
+cd backend && npx prisma migrate deploy && npm run dev
 
 # frontend (http://localhost:5173)
 cd frontend && npm run dev
 ```
 
+The first platform admin is created from the command line only: `cd backend && npm run admin:grant -- --email <verified email> --reason "<why>"` (that person must have signed in once).
+
 ## Checks
 
-Run from `frontend/`:
+| Where | Command | What it does |
+|---|---|---|
+| frontend | `npm run lint` / `npm run typecheck` / `npm run build` | ESLint, TypeScript, production build |
+| backend | `npm run typecheck` | Type-checks the JS backend (JSDoc + Prisma types) |
+| backend | `npm run prisma:drift` | Fails if `schema.prisma` differs from the migrations (needs `SHADOW_DATABASE_URL`) |
+| backend | `npm test` | API, authorization, lifecycle, booking concurrency and migration tests against a real Postgres (`TEST_DATABASE_ADMIN_URL`) |
 
-| Command | What it does |
-|---|---|
-| `npm run lint` | ESLint (errors fail CI; warnings are tracked tech debt) |
-| `npm run typecheck` | TypeScript, no emit |
-| `npm run build` | Typecheck + production build to `dist/` |
+Database rules and the production migration runbook: `backend/prisma/README.md`.
 
 ## CI
 
@@ -69,6 +74,6 @@ Run from `frontend/`:
 
 - **secrets-guard**: fails if any `.env` or service-account file is tracked
 - **frontend**: `npm ci`, lint, typecheck, build
-- **backend**: `npm ci`, syntax check of every source file, `prisma validate`
+- **backend** (with a Postgres service): `prisma validate`, schema drift check, typecheck, syntax check, migrations on an empty database, full test suite
 
 CI doesn't deploy.

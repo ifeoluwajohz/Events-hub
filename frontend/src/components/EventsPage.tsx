@@ -2,17 +2,8 @@ import React, { useEffect, useState } from "react";
 import { FaRegCalendarTimes } from "react-icons/fa";
 
 import { useParams, Link } from "react-router-dom";
-
-interface Event {
-  id: string;
-  title: string;
-  name: string;
-  date: string;
-  venue: string;
-  eventType: string;
-  shortDescription?: string;
-  image: string;
-}
+import { publicApi } from "../lib/api";
+import type { Event } from "../types/Event";
 
 const EventsPage: React.FC = () => {
   const { location } = useParams<{ location: string }>();
@@ -20,17 +11,11 @@ const EventsPage: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [eventsPerPage] = useState<number>(5); // Number of events per page
-  const API_URL = import.meta.env.VITE_REACT_APP_API_KEY;
 
   useEffect(() => {
     const fetchEvents = async () => {
       try {
-        const response = await fetch(`${API_URL}/search/events/?location=${location}`);
-        if (!response.ok) {
-          throw new Error("Failed to fetch events");
-        }
-        const data = await response.json();
-        setEvents(data.data);
+        setEvents(await publicApi<Event[]>(`/public/events?location=${encodeURIComponent(location ?? "")}&limit=100`));
       } catch (error) {
         console.error("Error fetching events:", error);
         setEvents([]);
@@ -94,14 +79,14 @@ const EventsPage: React.FC = () => {
                 {/* Event Image */}
                 <div className="relative h-48 sm:h-56 md:h-64 lg:h-72 overflow-hidden">
                   <img
-                    src={event.image || "/images/event-placeholder.jpg"}
-                    alt={event.name}
+                    src={event.coverImageUrl || "/images/event-placeholder.jpg"}
+                    alt={event.title}
                     className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent"></div>
                   <div className="absolute bottom-3 left-4 text-white">
-                    <h3 className="text-xl font-bold">{event.name}</h3>
-                    <p className="text-sm">{event.date}</p>
+                    <h3 className="text-xl font-bold">{event.title}</h3>
+                    <p className="text-sm">{new Date(event.startsAt).toDateString()}</p>
                   </div>
                 </div>
 
@@ -111,13 +96,13 @@ const EventsPage: React.FC = () => {
                     {event.title}
                   </p>
                   <p className="mt-2 text-sm text-gray-600 truncate">
-                    <strong>Venue:</strong> {event.venue}
+                    <strong>Venue:</strong> {event.venueName ?? event.city}
                   </p>
                   <p className="mt-1 text-sm text-gray-600 truncate">
-                    <strong>Type:</strong> {event.eventType}
+                    <strong>Type:</strong> {event.isFree ? "FREE" : "PAID"}
                   </p>
                   <p className="mt-3 text-sm text-gray-500 line-clamp-2">
-                    {event.shortDescription || "No additional description available."}
+                    {event.summary || "No additional description available."}
                   </p>
                 </div>
 

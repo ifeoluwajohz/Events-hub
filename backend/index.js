@@ -1,24 +1,16 @@
-const express = require("express");
-const app = express();
-const userRoutes = require("./routes/UserRoute");
-const searchRoutes = require("./routes/SearchRoute")
-const eventRoutes = require("./routes/EventRoute");
-// const ticketRoutes = require("./routes/TicketRoute");
-const cors = require('cors')
+require("dotenv").config();
+const { loadConfig } = require("./src/config");
+const { createApp } = require("./src/app");
+const { createClerkIdentity } = require("./src/auth/identity");
+const { disconnect } = require("./src/db");
 
-app.use(express.json());
-app.use(cors({ origin: '*', credentials: true }));
+const config = loadConfig();
+const app = createApp({ config, identity: createClerkIdentity(config.clerk) });
 
-
-// Routes
-app.use("/user", userRoutes);
-app.use("/event", eventRoutes);
-app.use("/search", searchRoutes);
-// app.use("/tickets", ticketRoutes);
-
-
-// Start the server
-const PORT = process.env.PORT || 5173;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+const server = app.listen(config.port, () => {
+  console.log(`API listening on port ${config.port}`);
 });
+
+const shutdown = () => server.close(() => disconnect().finally(() => process.exit(0)));
+process.on("SIGTERM", shutdown);
+process.on("SIGINT", shutdown);

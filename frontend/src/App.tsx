@@ -16,10 +16,8 @@ import SummaryPage from "./components/SummaryPage";
 
 import EventsPage from "./components/EventsPage";
 import Events from "./pages/Events";
-// import CreateEventForm from "./config/CreateEventForm"
 import TicketPage from "./pages/TicketPage";
 import TicketManagement from "./pages/TicketManagement";
-// import UpdateEventForm from "./config/UpdateEventForm"
 
 import EventDeatils from "./components/EventDetails";
 import Footer from "./components/Footer";

@@ -46,11 +46,26 @@ jobs:
           VITE_REACT_APP_API_KEY: http://localhost:4000
 
   backend:
-    name: Backend (syntax, Prisma schema)
+    name: Backend (schema, drift, typecheck, migrations, tests)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          # Scratch database for the drift check; tests create their own databases.
+          POSTGRES_DB: events_shadow
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      SHADOW_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/events_shadow
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/events_shadow
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,9 +74,17 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+      - name: Validate Prisma schema
+        run: npm run prisma:validate
+      - name: Schema drift (schema.prisma must equal the migrations)
+        run: npm run prisma:drift
+      - name: Typecheck (checkJs)
+        run: npm run typecheck
       - name: Syntax-check every source file
         run: git ls-files '*.js' | xargs -n1 node --check
-      - name: Validate Prisma schema
-        run: npx prisma validate
-        env:
-          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      - name: Migrations apply to an empty database
+        run: |
+          psql "$TEST_DATABASE_ADMIN_URL" -c 'CREATE DATABASE ci_fresh'
+          DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ci_fresh npx prisma migrate deploy
+      - name: Tests (auth, authorization, lifecycle, verification, booking concurrency, migrations)
+        run: npm test

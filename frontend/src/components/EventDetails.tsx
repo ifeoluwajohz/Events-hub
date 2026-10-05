@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { publicApi, formatMoney } from "../lib/api";
 import OrderButton from "./OrderButton";
 import { Event } from "../types/Event";
 import { FiShare2 } from "react-icons/fi";
@@ -12,17 +13,11 @@ const EventDetails: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState<string>("");
   const [copied, setCopied] = useState<boolean>(false);
   const [sharing, setSharing] = useState<boolean>(false);
-  const API_URL = import.meta.env.VITE_REACT_APP_API_KEY;
 
   useEffect(() => {
     const fetchEvent = async () => {
       try {
-        const response = await fetch(`${API_URL}/event/${id}`);
-        if (!response.ok) {
-          throw new Error("Failed to fetch event details");
-        }
-        const data: Event = await response.json();
-        setEvent(data);
+        setEvent(await publicApi<Event>(`/public/events/${encodeURIComponent(id ?? "")}`));
       } catch (err) {
         setError(err instanceof Error ? err.message : "An error occurred");
       } finally {
@@ -35,7 +30,7 @@ const EventDetails: React.FC = () => {
   useEffect(() => {
     if (!event) return;
 
-    const eventTime = new Date(event.date).getTime();
+    const eventTime = new Date(event.startsAt).getTime();
 
     const updateCountdown = () => {
       const now = new Date().getTime();
@@ -104,7 +99,7 @@ const EventDetails: React.FC = () => {
     <div className="p-6 md:p-10 bg-white shadow-lg rounded-sm">
       <div
         className="w-full h-64 md:h-96 bg-cover bg-center rounded-md mb-6"
-        style={{ backgroundImage: `url(${event.image})` }}
+        style={event.coverImageUrl ? { backgroundImage: `url(${event.coverImageUrl})` } : undefined}
       ></div>
 
       <div className="mb-8">
@@ -112,7 +107,7 @@ const EventDetails: React.FC = () => {
           {event.title}
         </h1>
         <p className="text-sm text-gray-500 my-3">
-          Price: {event.price || "Free Entry"}
+          Price: {event.isFree || event.priceFromMinor === null ? "Free Entry" : `From ${formatMoney(event.priceFromMinor, event.currency)}`}
         </p>
 
         <div className="bg-blue-100 text-blue-800 p-3 rounded-md mb-4">
@@ -127,7 +122,7 @@ const EventDetails: React.FC = () => {
               src="https://img.icons8.com/ios/50/calendar--v1.png"
               alt="calendar icon"
             />
-            <p>{new Date(event.date).toDateString()}</p>
+            <p>{new Date(event.startsAt).toDateString()}</p>
           </div>
           <div className="flex items-center space-x-2">
             <img
@@ -136,8 +131,10 @@ const EventDetails: React.FC = () => {
               alt="ticket icon"
             />
             <p>
-              {event.availableTickets > 0 ? (
-                `Available Tickets: ${event.availableTickets}`
+              {event.status === "CANCELLED" ? (
+                <span className="text-red-500 font-semibold">Cancelled</span>
+              ) : !event.soldOut ? (
+                `Available Tickets: ${event.ticketTypes.reduce((sum, t) => sum + t.remaining, 0)}`
               ) : (
                 <span className="text-red-500 font-semibold">Sold Out</span>
               )}
@@ -149,16 +146,16 @@ const EventDetails: React.FC = () => {
           <p className="text-lg font-semibold text-gray-800 mb-2">
             Description:
           </p>
-          <p className="text-gray-700">{event.longDescription}</p>
+          <p className="text-gray-700">{event.description}</p>
         </div>
 
         <div className="mb-6">
-          <Link
-            to={`/user/userInfo/${event.adminId}`}
-            className="text-blue-500 underline"
-          >
-            About The Organizer
-          </Link>
+          {event.organizer && (
+            <p className="text-gray-600">
+              Organized by <span className="font-semibold">{event.organizer.displayName}</span>
+              {event.organizer.verified && <span className="ml-2 text-green-700">(Verified organizer)</span>}
+            </p>
+          )}
         </div>
       </div>
 

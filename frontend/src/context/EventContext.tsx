@@ -1,21 +1,7 @@
 import React, { createContext, useContext, useState } from "react";
 
-// Event Interface
-interface Event {
-  id?: string;
-  title: string;
-  shortDescription: string;
-  longDescription: string;
-  date: Date | string ;
-  venue: string;
-  eventType: "FREE" | "PAID";
-  price?: number;
-  availableTickets?: number;
-  capacity?: number;
-  admin: string;
-  pictureId: string[];
-  categories: string[];
-}
+import { publicApi } from "../lib/api";
+import type { Event } from "../types/Event";
 
 // Context Props
 interface EventContextProps {
@@ -24,8 +10,6 @@ interface EventContextProps {
   error: string | null;
   location: string;
   setLocation: (location: string) => void;
-  createEvent: (event: Event) => Promise<void>;
-  updateEvent: (id: string, event: Event) => Promise<void>;
   fetchEventsByLocation: (searchLocation: string) => Promise<void>;
   fetchCurrentLocation: () => Promise<void>;
 }
@@ -40,19 +24,13 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [error, setError] = useState<string | null>(null);
   const [location, setLocation] = useState<string>("");
 
-  const token = localStorage.getItem("jwt");
-
-  // API Base URL
-  const API_URL = import.meta.env.VITE_REACT_APP_API_KEY;
-
-  // Fetch Events by Location
+  // Fetch Events by Location (published, upcoming; matches city/venue/address)
   const fetchEventsByLocation = async (searchLocation: string) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/search/byLocation/?location=${searchLocation}`);
-      const data: Event[] = await response.json();
-      setEvents(data);
+      const query = searchLocation.trim() ? `?location=${encodeURIComponent(searchLocation.trim())}` : "";
+      setEvents(await publicApi<Event[]>(`/public/events${query}`));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -71,53 +49,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     );
   };
   
-  // Create Event
-  const createEvent = async (event: Event) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_URL}/event/create`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(event),
-      });
-      const newEvent = await response.json();
-      setEvents((prev) => (prev ? [...prev, newEvent] : [newEvent]));
-      console.log(newEvent)
-    } catch {
-      setError("Error creating event");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Update Event
-  const updateEvent = async (id: string, event: Event) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const response = await fetch(`${API_URL}/events/create_event/${id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(event),
-      });
-      const updatedEvent = await response.json();
-      setEvents((prev) =>
-        prev ? prev.map((e) => (e.id === id ? updatedEvent : e)) : [updatedEvent]
-      );
-    } catch {
-      setError("Error updating event");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <EventContext.Provider
       value={{
@@ -126,8 +57,6 @@ export const EventProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         error,
         location,
         setLocation,
-        createEvent,
-        updateEvent,
         fetchEventsByLocation,
         fetchCurrentLocation,
       }}

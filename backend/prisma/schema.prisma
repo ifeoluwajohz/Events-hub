@@ -1,114 +1,386 @@
+// The Event: Prisma schema (Phase 2B)
+//
+// Compatibility rules (see backend/prisma/README.md):
+// - Columns that were only renamed keep their original DB names via @map.
+// - Fields prefixed `legacy` are pre-Phase-2 data kept for the later contract
+//   migration. New code must never read them for authorization or write them.
+// - CHECK constraints and append-only triggers live in raw SQL migrations.
+
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL") // Update with your database URL
+  url      = env("DATABASE_URL")
 }
 
-// Your Prisma models are well structured. The only changes are logic for role switching.
+// ───────────────────────── Identity ─────────────────────────
+
+enum PlatformRole {
+  USER
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
 model User {
-  id        String   @id @default(cuid())
-  ClerkId   String   @unique
-  Email     String?  @unique
-  Fullname  String?
-  Username  String?  @unique
-  phone     String?
-  // profilePicture String?
-  location  String?
-  role      Role     @default(USER)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String       @id @default(cuid())
+  clerkUserId       String?      @unique // canonical external identity
+  legacyFirebaseUid String?      @unique @map("firebaseUid") // legacy; used once for account linking
+  email             String?      @unique // lower-cased, verified email from Clerk (contact attribute, not identity)
+  name              String?
+  displayName       String?      @map("prefferedName")
+  avatarUrl         String?      @map("profilePicture")
+  phone             String?
+  location          String?
+  legacyRole        Role         @default(USER) @map("role") // LEGACY: meant "event creator". Never used for authorization.
+  platformRole      PlatformRole @default(USER) // changed only by admin service / CLI, always audited
+  status            UserStatus   @default(ACTIVE)
+  profileSyncedAt   DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
 
-  bookings Booking[] // One-to-many relation with Booking
-  tickets  Ticket[] // One-to-many relation with Ticket
-  reviews  EventReview[] // One-to-many relation with EventReview
-  admin    Admin?        @relation("UserToAdmin") // User may or may not be an Admin
+  legacyAdmin         LegacyAdmin?
+  organizer           Organizer?
+  bookings            Booking[]
+  tickets             Ticket[]                 @relation("TicketHolder")
+  checkIns            Ticket[]                 @relation("TicketCheckedInBy")
+  ratings             EventRating[]
+  savedEvents         SavedEvent[]
+  follows             OrganizerFollow[]
+  reportsFiled        Report[]                 @relation("ReportReporter")
+  reportsAgainst      Report[]                 @relation("ReportTargetUser")
+  reportsResolved     Report[]                 @relation("ReportResolver")
+  verificationSubmits VerificationSubmission[]
+  verificationReviews VerificationDecision[]
+  eventModerations    EventModerationAction[]
+  organizerActions    OrganizerStatusChange[]
+  auditEntries        AuditLog[]
+  uploads             FileAsset[]
 }
 
-model Admin {
-  id        String   @id // Primary key, references User
+// LEGACY (pre-Phase-2 "Admin" = event creator). Read-only; dropped in the contract migration.
+model LegacyAdmin {
+  userId    String   @id
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  events Event[] // One-to-many relation with Event
-  admin  User    @relation("UserToAdmin", fields: [id], references: [id]) // Relation to User
+  user   User    @relation(fields: [userId], references: [id])
+  events Event[]
+
+  @@map("Admin")
+}
+
+// ───────────────────────── Organizer & verification ─────────────────────────
+
+enum OrganizerType {
+  INDIVIDUAL
+  BUSINESS
+  NON_PROFIT
+}
+
+enum OrganizerStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum OrganizerVerificationStatus {
+  NOT_STARTED
+  PENDING
+  CHANGES_REQUESTED
+  VERIFIED
+  REJECTED
+}
+
+model Organizer {
+  id                 String                      @id @default(cuid())
+  ownerUserId        String                      @unique
+  slug               String                      @unique
+  displayName        String
+  type               OrganizerType               @default(INDIVIDUAL)
+  bio                String?
+  websiteUrl         String?
+  contactEmail       String?
+  contactPhone       String?
+  country            String? // ISO 3166-1 alpha-2
+  city               String?
+  logoAssetId        String?
+  status             OrganizerStatus             @default(ACTIVE)
+  verificationStatus OrganizerVerificationStatus @default(NOT_STARTED) // derived from submissions; written only with them
+  verifiedAt         DateTime?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+
+  owner         User                     @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  logo          FileAsset?               @relation("OrganizerLogo", fields: [logoAssetId], references: [id], onDelete: SetNull)
+  events        Event[]
+  submissions   VerificationSubmission[]
+  statusChanges OrganizerStatusChange[]
+  followers     OrganizerFollow[]
+  reports       Report[]
+
+  @@index([verificationStatus])
+  @@index([status])
+}
+
+model OrganizerStatusChange {
+  id          String          @id @default(cuid())
+  organizerId String
+  actorId     String
+  fromStatus  OrganizerStatus
+  toStatus    OrganizerStatus
+  reason      String
+  createdAt   DateTime        @default(now())
+
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  actor     User      @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([organizerId, createdAt])
+}
+
+enum VerificationSubmissionStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  REVOKED
+  WITHDRAWN
+}
+
+// One attempt. Data and evidence are immutable once submitted; only status moves.
+model VerificationSubmission {
+  id                    String                       @id @default(cuid())
+  organizerId           String
+  submittedById         String
+  status                VerificationSubmissionStatus @default(SUBMITTED)
+  country               String
+  organizerType         OrganizerType
+  requirementSetVersion String
+  declaredData          Json // PII: admin-only
+  supersedesId          String?                      @unique
+  submittedAt           DateTime                     @default(now())
+  updatedAt             DateTime                     @updatedAt
+
+  organizer    Organizer               @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  submittedBy  User                    @relation(fields: [submittedById], references: [id], onDelete: Restrict)
+  supersedes   VerificationSubmission? @relation("Resubmission", fields: [supersedesId], references: [id], onDelete: Restrict)
+  supersededBy VerificationSubmission? @relation("Resubmission")
+  evidence     VerificationEvidence[]
+  decisions    VerificationDecision[]
+
+  @@index([organizerId, submittedAt])
+  @@index([status, submittedAt])
+}
+
+enum EvidenceKind {
+  GOVERNMENT_ID
+  BUSINESS_REGISTRATION
+  PROOF_OF_ADDRESS
+  TAX_ID
+  WEB_PRESENCE
+  SOCIAL_PROFILE
+  OTHER
+}
+
+model VerificationEvidence {
+  id             String       @id @default(cuid())
+  submissionId   String
+  requirementKey String
+  kind           EvidenceKind
+  assetId        String?
+  value          String?
+  note           String?
+  createdAt      DateTime     @default(now())
+
+  submission VerificationSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  asset      FileAsset?             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+
+  @@index([submissionId])
+}
+
+enum VerificationAction {
+  START_REVIEW
+  APPROVE
+  REQUEST_CHANGES
+  REJECT
+  REVOKE
+}
+
+// Append-only (DB trigger).
+model VerificationDecision {
+  id           String             @id @default(cuid())
+  submissionId String
+  reviewerId   String
+  action       VerificationAction
+  reason       String?
+  internalNote String?
+  createdAt    DateTime           @default(now())
+
+  submission VerificationSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  reviewer   User                   @relation(fields: [reviewerId], references: [id], onDelete: Restrict)
+
+  @@index([submissionId, createdAt])
+  @@index([reviewerId, createdAt])
+}
+
+// ───────────────────────── Media (provider-neutral) ─────────────────────────
+
+enum AssetPurpose {
+  EVENT_IMAGE
+  ORGANIZER_LOGO
+  VERIFICATION_EVIDENCE
+}
+
+enum AssetVisibility {
+  PUBLIC
+  PRIVATE
+}
+
+enum AssetStatus {
+  PENDING_UPLOAD
+  READY
+  DELETED
+}
+
+model FileAsset {
+  id              String          @id @default(cuid())
+  ownerUserId     String?
+  purpose         AssetPurpose
+  visibility      AssetVisibility
+  status          AssetStatus     @default(PENDING_UPLOAD)
+  storageProvider String // "external-url" until a storage provider is chosen
+  storageKey      String
+  mimeType        String?
+  sizeBytes       Int?
+  checksumSha256  String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  owner          User?                  @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+  eventMedia     EventMedia[]
+  organizerLogos Organizer[]            @relation("OrganizerLogo")
+  evidence       VerificationEvidence[]
+
+  @@unique([storageProvider, storageKey, purpose])
+}
+
+// LEGACY image table; migrated into FileAsset + EventMedia.
+model LegacyPicture {
+  id              String   @id @unique
+  displayPicture  String
+  previewPictures String[]
+  events          Event[]
+
+  @@map("Picture")
+}
+
+// ───────────────────────── Events ─────────────────────────
+
+enum EventStatus {
+  DRAFT
+  PENDING_REVIEW
+  PUBLISHED
+  CANCELLED
+  SUSPENDED
+  COMPLETED
+
+  @@map("EventLifecycleStatus")
+}
+
+enum AttendanceMode {
+  IN_PERSON
+  ONLINE
+  HYBRID
 }
 
 model Event {
-  id               String    @id @unique @default(cuid())
-  title            String
-  preview          String
-  description      String
-  date             DateTime
-  venue            String
-  price            Float? // Null for free events
-  capacity         Int?
-  availableTickets Int?
-  ImageId          String?
-  AdminId          String // Rename to match Admin model
-  eventType        EventType
+  id                 String         @id @unique @default(cuid())
+  organizerId        String
+  slug               String         @unique
+  title              String
+  summary            String         @map("shortDescription")
+  description        String         @map("longDescription")
+  status             EventStatus    @default(DRAFT)
+  attendanceMode     AttendanceMode @default(IN_PERSON)
+  startsAt           DateTime       @map("date")
+  endsAt             DateTime?
+  timezone           String
+  venueName          String?        @map("venue")
+  addressLine        String?
+  city               String?
+  region             String?
+  country            String?
+  latitude           Float?
+  longitude          Float?
+  onlineUrl          String?
+  currency           String
+  submittedAt        DateTime?
+  publishedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
-  bookings      Booking[] // One-to-many relation with Booking
-  reviews       EventReview[] // One-to-many relation with EventReview
-  discountCodes DiscountCode[] // One-to-many relation with DiscountCode
-  tickets       Ticket[] // One-to-many relation with Ticket
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  // LEGACY columns (kept until the contract migration)
+  legacyAdminId          String?    @map("adminId")
+  legacyEventType        EventType? @map("eventType")
+  legacyPrice            Float?     @map("price")
+  legacyAvailableTickets Int?       @map("availableTickets")
+  legacyPictureId        String?    @map("pictureId")
 
-  image      EventImages?    @relation(fields: [ImageId], references: [id])
-  admin      Admin           @relation(fields: [AdminId], references: [id])
-  categories EventCategory[]
+  organizer     Organizer               @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  legacyAdmin   LegacyAdmin?            @relation(fields: [legacyAdminId], references: [userId], onDelete: Restrict)
+  legacyPicture LegacyPicture?          @relation(fields: [legacyPictureId], references: [id], onDelete: SetNull)
+  media         EventMedia[]
+  categories    EventCategory[]
+  ticketTypes   TicketType[]
+  bookings      Booking[]
+  tickets       Ticket[]
+  ratings       EventRating[]
+  moderation    EventModerationAction[]
+  savedBy       SavedEvent[]
+  reports       Report[]
+  discountCodes DiscountCode[]
 
-  @@index([AdminId, title, date, venue, description]) // Useful composite index
+  @@index([legacyAdminId, title, startsAt, venueName, summary])
+  @@index([status, startsAt])
+  @@index([organizerId, status])
+  @@index([status, submittedAt])
+  @@index([country, city, startsAt])
 }
 
-model EventReview {
-  id        String   @id @default(uuid()) @db.Uuid
-  userId    String
-  eventId   String
-  rating    Int      @default(5) // Rating out of 5
-  comment   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  event Event @relation(fields: [eventId], references: [id])
-  user  User  @relation(fields: [userId], references: [id]) // Ensure userId references the correct field in User model
+enum EventMediaRole {
+  COVER
+  GALLERY
 }
 
-model EventImages {
-  id              String   @id @unique @default(cuid())
-  displayPicture  String
-  previewPictures String[]
-  Event           Event[]
-}
+model EventMedia {
+  eventId  String
+  assetId  String
+  role     EventMediaRole
+  position Int            @default(0)
 
-model Booking {
-  id                 String        @id @default(cuid())
-  userId             String
-  eventId            String
-  bookingDate        DateTime      @default(now())
-  quantity           Int
-  totalAmount        Float
-  status             BookingStatus @default(PENDING)
-  isActive           Boolean       @default(false)
-  cancellationReason String? // For cancellations
-  refundStatus       String? // e.g., refunded, processing, etc.
-  ticket             Ticket[] // Clarify relationship
-  user               User          @relation(fields: [userId], references: [id])
-  event              Event         @relation(fields: [eventId], references: [id])
-  payment            Payment[]
+  event Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  asset FileAsset @relation(fields: [assetId], references: [id], onDelete: Restrict)
 
-  @@index([userId, eventId, status])
+  @@id([eventId, assetId])
 }
 
 model Category {
-  id     String          @id @default(cuid())
-  name   String          @unique
-  events EventCategory[]
+  id        String          @id @default(cuid())
+  name      String          @unique
+  slug      String          @unique
+  sortOrder Int             @default(0)
+  isActive  Boolean         @default(true)
+  events    EventCategory[]
 
-  @@index([name]) // Useful composite index
+  @@index([name])
 }
 
 model EventCategory {
@@ -117,35 +389,180 @@ model EventCategory {
   categoryId String
   event      Event    @relation(fields: [eventId], references: [id])
   category   Category @relation(fields: [categoryId], references: [id])
+
+  @@unique([eventId, categoryId])
+  @@index([categoryId])
+}
+
+enum ModerationAction {
+  SUBMIT
+  WITHDRAW
+  APPROVE
+  REQUEST_CHANGES
+  REJECT
+  SUSPEND
+  REINSTATE
+  CANCEL
+  COMPLETE
+  EDIT
+  MIGRATED
+}
+
+enum ActorRole {
+  ORGANIZER
+  ADMIN
+  SYSTEM
+}
+
+// Append-only (DB trigger). Every status transition, plus EDITs of published events.
+model EventModerationAction {
+  id           String           @id @default(cuid())
+  eventId      String
+  actorId      String?
+  actorRole    ActorRole
+  action       ModerationAction
+  fromStatus   EventStatus?
+  toStatus     EventStatus
+  reason       String? // shown to the organizer
+  internalNote String? // admin-only
+  metadata     Json? // SUBMIT: snapshot of reviewed fields; EDIT: field changes
+  createdAt    DateTime         @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, createdAt])
+  @@index([actorId, createdAt])
+}
+
+// ───────────────────────── Tickets & bookings ─────────────────────────
+
+enum TicketTypeStatus {
+  ACTIVE
+  HIDDEN
+  ARCHIVED
+}
+
+model TicketType {
+  id            String           @id @default(cuid())
+  eventId       String
+  name          String
+  description   String?
+  priceMinor    Int // integer minor units of Event.currency; 0 = free
+  quantityTotal Int
+  quantitySold  Int              @default(0)
+  minPerOrder   Int              @default(1)
+  maxPerOrder   Int              @default(10)
+  salesStartAt  DateTime?
+  salesEndAt    DateTime?
+  status        TicketTypeStatus @default(ACTIVE)
+  sortOrder     Int              @default(0)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  event        Event         @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  bookingItems BookingItem[]
+  tickets      Ticket[]
+
+  @@unique([eventId, name])
+  @@index([eventId])
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  EXPIRED
+}
+
+model Booking {
+  id                 String        @id @default(cuid())
+  userId             String
+  eventId            String
+  bookingDate        DateTime      @default(now())
+  status             BookingStatus @default(PENDING)
+  currency           String
+  totalMinor         Int
+  idempotencyKey     String?
+  confirmedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+
+  // LEGACY columns
+  legacyQuantity     Int?    @map("quantity")
+  legacyTotalAmount  Float?  @map("totalAmount")
+  legacyIsActive     Boolean @default(false) @map("isActive")
+  legacyRefundStatus String? @map("refundStatus")
+
+  user    User          @relation(fields: [userId], references: [id])
+  event   Event         @relation(fields: [eventId], references: [id])
+  items   BookingItem[]
+  tickets Ticket[]
+  payment Payment[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([userId, eventId])
+  @@index([userId, bookingDate])
+  @@index([eventId, status])
+}
+
+model BookingItem {
+  id             String @id @default(cuid())
+  bookingId      String
+  ticketTypeId   String
+  quantity       Int
+  unitPriceMinor Int
+
+  booking    Booking    @relation(fields: [bookingId], references: [id], onDelete: Restrict)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+
+  @@unique([bookingId, ticketTypeId])
+}
+
+// AVAILABLE and BOOKED are LEGACY values (pre-generated inventory model); new code only writes VALID/CANCELLED.
+enum TicketStatus {
+  AVAILABLE
+  BOOKED
+  CANCELLED
+  VALID
 }
 
 model Ticket {
-  id          String       @id @default(uuid()) @db.Uuid
-  eventId     String
-  bookingId   String? // Optional bookingId
-  userId      String?
-  status      TicketStatus @default(AVAILABLE)
-  purchasedAt DateTime?
+  id            String       @id @default(uuid()) @db.Uuid
+  eventId       String
+  bookingId     String?
+  ticketTypeId  String?
+  holderUserId  String?      @map("userId")
+  code          String?      @unique // random, >=128 bits; the QR payload
+  status        TicketStatus @default(VALID)
+  checkedInAt   DateTime?
+  checkedInById String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
 
-  event   Event    @relation(fields: [eventId], references: [id])
-  booking Booking? @relation(fields: [bookingId], references: [id]) // Optional booking relation
-  user    User?    @relation(fields: [userId], references: [id])
+  legacyPurchasedAt DateTime? @map("purchasedAt")
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  event       Event       @relation(fields: [eventId], references: [id])
+  booking     Booking?    @relation(fields: [bookingId], references: [id])
+  ticketType  TicketType? @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  holder      User?       @relation("TicketHolder", fields: [holderUserId], references: [id])
+  checkedInBy User?       @relation("TicketCheckedInBy", fields: [checkedInById], references: [id], onDelete: SetNull)
 
-  @@index([eventId, userId])
+  @@index([eventId, holderUserId])
+  @@index([eventId, status])
+  @@index([bookingId])
 }
 
+// Unchanged until Phase 4 (payments).
 model Payment {
   id        String        @id @default(uuid()) @db.Uuid
-  bookingId String // Each payment is linked to a booking
+  bookingId String
   amount    Float
   status    PaymentStatus @default(PENDING)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  booking Booking @relation(fields: [bookingId], references: [id]) // Required relationship to Booking
+  booking Booking @relation(fields: [bookingId], references: [id])
 }
 
 model DiscountCode {
@@ -159,21 +576,120 @@ model DiscountCode {
   event Event @relation(fields: [eventId], references: [id])
 }
 
+// Attendee star ratings (DB table "EventReview"; renamed so "review" only means moderation).
+model EventRating {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String
+  eventId   String
+  rating    Int      @default(5)
+  comment   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id])
+  user  User  @relation(fields: [userId], references: [id])
+
+  @@map("EventReview")
+}
+
+// ───────────────────────── Engagement ─────────────────────────
+
+model SavedEvent {
+  userId    String
+  eventId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@id([userId, eventId])
+  @@index([eventId])
+}
+
+model OrganizerFollow {
+  userId      String
+  organizerId String
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
+  @@id([userId, organizerId])
+  @@index([organizerId])
+}
+
+// ───────────────────────── Trust & safety ─────────────────────────
+
+enum ReportReason {
+  SCAM_OR_FRAUD
+  MISLEADING
+  INAPPROPRIATE
+  SPAM
+  SAFETY_CONCERN
+  INTELLECTUAL_PROPERTY
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  UNDER_REVIEW
+  ACTION_TAKEN
+  DISMISSED
+}
+
+// Exactly one target is set (DB CHECK).
+model Report {
+  id           String       @id @default(cuid())
+  reporterId   String
+  eventId      String?
+  organizerId  String?
+  targetUserId String?
+  reason       ReportReason
+  details      String?
+  status       ReportStatus @default(OPEN)
+  resolvedById String?
+  resolution   String?
+  resolvedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  reporter   User       @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  event      Event?     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  organizer  Organizer? @relation(fields: [organizerId], references: [id], onDelete: Restrict)
+  targetUser User?      @relation("ReportTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  resolvedBy User?      @relation("ReportResolver", fields: [resolvedById], references: [id], onDelete: Restrict)
+
+  @@index([status, createdAt])
+  @@index([eventId])
+  @@index([organizerId])
+  @@index([reporterId, createdAt])
+}
+
+// Append-only (DB trigger).
+model AuditLog {
+  id         String    @id @default(cuid())
+  actorId    String?
+  actorRole  ActorRole
+  action     String
+  targetType String
+  targetId   String
+  metadata   Json?
+  requestId  String?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([targetType, targetId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ───────────────────────── Legacy / unchanged enums ─────────────────────────
+
 enum Role {
   USER
   ADMIN
-}
-
-enum AttendanceStatus {
-  PENDING
-  ATTENDED
-  NOT_ATTENDED
-}
-
-enum TicketStatus {
-  AVAILABLE
-  BOOKED
-  CANCELLED
 }
 
 enum PaymentStatus {
@@ -187,14 +703,18 @@ enum EventType {
   PAID
 }
 
-enum EventStatus {
+// LEGACY: never used by a column; kept so the drift check stays exact.
+enum LegacyEventStatus {
   UPCOMING
   COMPLETED
   CANCELLED
+
+  @@map("EventStatus")
 }
 
-enum BookingStatus {
+// LEGACY: unused.
+enum AttendanceStatus {
   PENDING
-  CONFIRMED
-  CANCELLED
+  ATTENDED
+  NOT_ATTENDED
 }

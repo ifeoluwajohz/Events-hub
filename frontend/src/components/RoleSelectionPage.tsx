@@ -18,13 +18,13 @@ const RoleSelectionPage: React.FC = () => {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100">
       <div className="p-8 bg-white shadow-lg rounded-md text-center">
-        <h1 className="text-2xl font-bold">Are you an Admin or an Attendee?</h1>
+        <h1 className="text-2xl font-bold">Are you an Organizer or an Attendee?</h1>
         <div className="space-y-4 mt-4">
           <button
             onClick={() => handleSelection("admin")}
             className="w-full py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
           >
-            Admin
+            Organizer
           </button>
           <button
             onClick={() => handleSelection("user")}
