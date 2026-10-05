@@ -35,6 +35,8 @@ This replaces phases 5–6 in `AUDIT.md` §6. The full redesign waits until phas
 
 ## 3. What this means for Phase 2 (data model)
 
+> Detailed proposal: [`PHASE2_ARCHITECTURE.md`](./PHASE2_ARCHITECTURE.md) (Phase 2A, awaiting approval).
+
 The directive changes Phase 2's scope. Building only today's features would force a second schema migration later. The decisive issue:
 
 > **Today "admin" means "event creator."** `RoleSelectionPage` asks attendees whether they're an "admin", `switchRole` lets anyone become one, and events belong to an `Admin` row. The product needs three separate concepts.
