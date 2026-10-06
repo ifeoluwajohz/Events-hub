@@ -25,7 +25,7 @@ The Event is an **event discovery ecosystem**, not "a website with event cards".
 | 0 | Security and credential remediation | Code done; **credential rotation pending (owner)** |
 | 1 | Build stabilisation and CI | Done (`5cf2a46`) |
 | 2 | Auth, database and backend foundation, **including the full role/organizer/verification/status model** (section 3) | 2A designed; **2B implemented and tested** ([`PHASE2B_IMPLEMENTATION.md`](./PHASE2B_IMPLEMENTATION.md)); production migration pending |
-| 3 | Discovery and search architecture (geo, filters, pagination) | |
+| 3 | Discovery and search architecture (geo, filters, pagination) | 3A designed, measured on 200k events ([`PHASE3_DISCOVERY.md`](./PHASE3_DISCOVERY.md)); awaiting approval |
 | 4 | Booking and ticketing architecture and security (ticket types, atomic booking, payments, check-in) | |
 | 5 | **Complete UI/UX redesign** of every surface (section 5) | |
 | 6 | Polish: performance, accessibility, SEO, analytics | |
